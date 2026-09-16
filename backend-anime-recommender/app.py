@@ -102,68 +102,78 @@ def get_recommendations_from_indices(watched_indices, n=10):
     return recs
 
 def fetch_all_mal_pages(username):
+    """
+    Get a user's completed anime directly from the official MyAnimeList API.
+    This removes the Jikan dependency that was causing the 504 errors.
+    """
+    # Public client identifier used for public MAL API data.
+    # If you register your own MAL API application, set MAL_CLIENT_ID
+    # in Render and it will automatically be used instead.
+    mal_client_id = os.environ.get(
+        "MAL_CLIENT_ID",
+        "6114d00ca681b7701d1e15fe11a4987e"
+    )
+
+    url = f"https://api.myanimelist.net/v2/users/{username}/animelist"
+
+    headers = {
+        "X-MAL-Client-ID": mal_client_id,
+        "Accept": "application/json",
+        "User-Agent": "Anime-Recommender/1.0"
+    }
+
+    params = {
+        "status": "completed",
+        "limit": 1000,
+        "offset": 0,
+        "fields": "node{title}"
+    }
+
     titles = []
-    page = 1
 
     while True:
-        url = f"https://api.jikan.moe/v4/users/{username}/animelist?status=completed&page={page}"
+        response = requests.get(
+            url,
+            headers=headers,
+            params=params,
+            timeout=20
+        )
 
-        try:
-            res = requests.get(
-                url,
-                headers={"User-Agent": "Anime-Recommender/1.0"},
-                timeout=20
+        if response.status_code == 404:
+            raise requests.exceptions.HTTPError(response=response)
+
+        if response.status_code == 429:
+            print("MAL rate limit hit. Waiting 5 seconds...")
+            time.sleep(5)
+            continue
+
+        if response.status_code in (401, 403):
+            raise RuntimeError(
+                "MyAnimeList denied access to this public list. "
+                "The user's anime list may be private."
             )
 
-            # Jikan/MAL is temporarily unavailable
-            if res.status_code in (502, 503, 504):
-                raise RuntimeError(
-                    f"Jikan is temporarily unavailable (HTTP {res.status_code})"
-                )
+        response.raise_for_status()
 
-            # Jikan rate limit
-            if res.status_code == 429:
-                print("Jikan rate limit. Waiting 5 seconds...")
-                time.sleep(5)
-                continue
+        payload = response.json()
+        entries = payload.get("data", [])
 
-            # MAL user does not exist
-            if res.status_code == 404:
-                raise requests.exceptions.HTTPError(response=res)
+        for entry in entries:
+            node = entry.get("node", {})
+            title = node.get("title")
+            if title:
+                titles.append(title)
 
-            res.raise_for_status()
+        # MAL supplies the next page URL when more results exist.
+        next_url = payload.get("paging", {}).get("next")
 
-            data = res.json()
-            entries = data.get("data", [])
+        if not next_url:
+            break
 
-            if not entries:
-                break
+        url = next_url
+        params = {}
 
-            for item in entries:
-                anime = item.get("anime", {})
-                title = anime.get("title")
-                if title:
-                    titles.append(title)
-
-            pagination = data.get("pagination", {})
-
-            if not pagination.get("has_next_page", False):
-                break
-
-            page += 1
-            time.sleep(1)
-
-        except RuntimeError:
-            print("Jikan is currently unavailable.")
-            raise
-
-        except requests.exceptions.Timeout:
-            print("Jikan request timed out.")
-            raise RuntimeError("Jikan timed out")
-
-        except requests.exceptions.RequestException as e:
-            print(f"Jikan request failed: {e}")
-            raise
+        time.sleep(0.5)
 
     return titles
 
@@ -339,19 +349,34 @@ def sync_mal():
                 "error": f"MAL user '{username}' not found"
             }), 404
 
-        return jsonify({
-            "error": "MyAnimeList is temporarily unavailable. Jikan could not retrieve the user list."
-        }), 503
+        if e.response is not None and e.response.status_code in (401, 403):
+            return jsonify({
+                "error": "MAL denied access to this user's anime list. The list may be private."
+            }), 403
 
-    except RuntimeError:
+        if e.response is not None and e.response.status_code == 429:
+            return jsonify({
+                "error": "MyAnimeList rate limit reached. Please try again shortly."
+            }), 429
+
         return jsonify({
-            "error": "MyAnimeList is temporarily unavailable right now. Please try again."
+            "error": f"MyAnimeList API error: {str(e)}"
+        }), 502
+
+    except RuntimeError as e:
+        return jsonify({
+            "error": str(e)
         }), 503
 
     except requests.exceptions.Timeout:
         return jsonify({
-            "error": "MyAnimeList request timed out. Please try again."
+            "error": "MyAnimeList API timed out. Please try again."
         }), 504
+
+    except requests.exceptions.RequestException as e:
+        return jsonify({
+            "error": f"Could not reach MyAnimeList: {str(e)}"
+        }), 502
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
