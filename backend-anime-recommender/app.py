@@ -106,7 +106,7 @@ def fetch_all_mal_pages(username):
     page = 1
     while True:
         url = f"https://api.jikan.moe/v4/users/{username}/animelist?status=completed&page={page}"
-        res = requests.get(url, timeout=10)
+        res = requests.get(url, timeout=30)
         
         # Handle Jikan Rate Limits gracefully
         if res.status_code == 429:
