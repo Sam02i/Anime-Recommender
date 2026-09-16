@@ -1,93 +1,84 @@
-
 import pandas as pd
 import html
 import os
 
-# data cleaning 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-data_path = os.path.join(BASE_DIR, "data", "anime-datas.csv")
+data_path = os.path.join(BASE_DIR, "data", "yume_master_dataset.csv")
 
-df = pd.read_csv(data_path)
+# utf-8-sig handles UTF-8 with or without BOM
+df = pd.read_csv(data_path, encoding="utf-8-sig")
 
-print(df.columns.tolist())
+print("Columns:", df.columns.tolist())
+print("Shape:", df.shape)
 
-print("Shape",df.shape)
-print("\n First 5 rows :")
-print(df.head(5))
-print("\n Column types:")
-df.info()
+# Expected: Name, Score, Episodes, Genres, Synopsis, Image_URL
+print("Columns found:", df.columns.tolist())
 
-print(df[["Score", "Rating"]].head())
 
-df = df.drop(columns=["English name" ,"Other name" ,"Aired","Premiered","Status","Producers","Licensors","Studios","Source","Duration","Rank","Popularity","Favorites","Scored By","Rating"])
+def fix_mojibake(text):
+    if not isinstance(text, str):
+        return text
+    try:
+        return text.encode("latin-1").decode("utf-8")
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        return text  # already clean
+
+df["Name"]     = df["Name"].apply(fix_mojibake)
+df["Synopsis"] = df["Synopsis"].apply(fix_mojibake)
+
 
 df["Episodes"] = pd.to_numeric(df["Episodes"], errors="coerce")
-df["Score"]   = pd.to_numeric(df["Score"],   errors="coerce")
-df["Members"]  = pd.to_numeric(df["Members"],  errors="coerce")
+df["Score"]    = pd.to_numeric(df["Score"],    errors="coerce")
 
-print("\nMissing values per column:")
-print(df.isna().sum())
 
-df['Display_name'] = df['Name']
+df["Episodes"] = df["Episodes"].fillna(df["Episodes"].median())
+df["Score"]    = df["Score"].fillna(df["Score"].median())
 
-median_val = df['Episodes'].median()
-df['Episodes'] = df['Episodes'].fillna(median_val)
 
-median_val = df['Score'].median()
-df['Score'] = df['Score'].fillna(median_val)
+df.dropna(subset=["Name"], inplace=True)
+df["Name"] = df["Name"].apply(html.unescape).str.strip().str.lower()
+df = df[df["Name"].str.strip() != ""]
 
-print(f"\nDuplicates found: {df.duplicated().sum()}")
-df.drop_duplicates(subset=["anime_id"], inplace=True)
+print(f"Duplicates found: {df.duplicated(subset=['Name']).sum()}")
+df.drop_duplicates(subset=["Name"], inplace=True)
 
-df.dropna(subset = ["Name","Genres","Synopsis","Type"] ,inplace=True)
 
-df["Name"] = df["Name"].apply(html.unescape)
-df["Name"] = df["Name"].str.replace(r'^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$', '', regex=True)
-df["Name"] = df["Name"].str.strip().str.lower()
-
-df["Genres"] = df["Genres"].str.replace("unknown", "" , case = False)
-df["Genres"] = df["Genres"].fillna("")
-df['Genres'] = df['Genres'].str.lower().str.strip()
-
-df["Synopsis"] = df["Synopsis"].str.replace("unknown", "", case=False)
-df["Synopsis"] = df["Synopsis"].fillna("")
+df.dropna(subset=["Genres", "Synopsis"], inplace=True)
 df = df[df["Synopsis"].str.strip() != ""]
 
-df['Type'] = df['Type'].str.lower().str.strip()
 
-empty_before = df[df["Name"] == ""].shape[0]
-print(f"\nEmpty names before fix: {empty_before}")
-
-
-df.loc[df["Name"] == "", "Name"] = (
-    df.loc[df["Name"] == "", "Display_name"]
-    .apply(html.unescape)
-    .str.strip()
+df["Genres"] = (
+    df["Genres"]
+    .fillna("")
+    .apply(fix_mojibake)
+    .str.replace("unknown", "", case=False, regex=False)
     .str.lower()
+    .str.strip()
 )
 
-empty_after = df[df["Name"] == ""].shape[0]
-print(f"Empty names after fix:  {empty_after}")
+df["Synopsis"] = (
+    df["Synopsis"]
+    .fillna("")
+    .str.replace("unknown", "", case=False, regex=False)
+    .str.strip())
+
+df = df[df["Synopsis"] != ""]
+
+df["Image_URL"] = df["Image_URL"].fillna("")
+
+
+df["combined_features"] = (df["Genres"] + " ") * 4 + df["Synopsis"].fillna("")
+
 
 df = df.reset_index(drop=True)
-
-df = df.rename(columns={"Image URL": "Image_URL"})
-df["combined_features"] = df["Genres"] + " " + df["Synopsis"]
-
-df = df.drop(columns = ["Display_name"])
-
-print(df["combined_features"].head(5))
 
 print("\nFinal shape:", df.shape)
 print("\nMissing values after cleaning:")
 print(df.isna().sum())
 print("\nSample:")
-print(df.head())
+print(df[["Name","Score","Episodes","Genres","Image_URL"]].head())
 
 
 output_path = os.path.join(BASE_DIR, "data", "anime-data-cleaned.csv")
-df.to_csv(output_path, index=False)
-
-
-
-
+df.to_csv(output_path, index=False, encoding="utf-8-sig")
+print(f"\nSaved to {output_path}")
