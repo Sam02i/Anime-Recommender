@@ -102,31 +102,66 @@ def get_recommendations_from_indices(watched_indices, n=10):
     return recs
 
 def fetch_all_mal_pages(username):
-    titles = []
-    page = 1
-    while True:
-        url = f"https://api.jikan.moe/v4/users/{username}/animelist?status=completed&page={page}"
-        res = requests.get(url, timeout=30)
-        
-        # Handle Jikan Rate Limits gracefully
+    """Fetch completed MAL titles through Jikan, with a fallback endpoint."""
+    headers = {"User-Agent": "Anime-Recommender/1.0"}
+
+    try:
+        titles = []
+        page = 1
+        while True:
+            url = f"https://api.jikan.moe/v4/users/{username}/animelist?status=completed&page={page}"
+            res = requests.get(url, headers=headers, timeout=20)
+
+            if res.status_code == 429:
+                print("Jikan rate limit hit. Waiting 3 seconds...")
+                time.sleep(3)
+                continue
+
+            res.raise_for_status()
+            data = res.json()
+            entries = data.get("data", [])
+            if not entries:
+                break
+
+            for item in entries:
+                anime = item.get("anime", {})
+                if anime.get("title"):
+                    titles.append(anime["title"])
+
+            pagination = data.get("pagination", {})
+            if not pagination.get("has_next_page", False):
+                break
+
+            page += 1
+            time.sleep(1)
+
+        return titles
+
+    except requests.exceptions.HTTPError as primary_error:
+        status = primary_error.response.status_code if primary_error.response is not None else None
+
+        if status not in (502, 503, 504):
+            raise
+
+        print(f"Jikan /animelist returned {status}; trying /full fallback...")
+        url = f"https://api.jikan.moe/v4/users/{username}/full"
+        res = requests.get(url, headers=headers, timeout=20)
+
         if res.status_code == 429:
-            print("Jikan rate limit hit. Waiting 3 seconds...")
             time.sleep(3)
-            continue
+            res = requests.get(url, headers=headers, timeout=20)
 
         res.raise_for_status()
         data = res.json()
-        entries = data.get("data", [])
-        if not entries:
-            break
-        for item in entries:
-            titles.append(item["anime"]["title"])
-        pagination = data.get("pagination", {})
-        if not pagination.get("has_next_page", False):
-            break
-        page += 1
-        time.sleep(1) # Wait 1 second to respect rate limits
-    return titles
+
+        titles = []
+        for item in data.get("data", []):
+            if str(item.get("status", "")).lower() == "completed":
+                anime = item.get("anime", {})
+                if anime.get("title"):
+                    titles.append(anime["title"])
+
+        return titles
 
 # --- API ENDPOINTS ---
 @app.route('/api/test', methods=['GET'])
@@ -297,6 +332,8 @@ def sync_mal():
     except requests.exceptions.HTTPError as e:
         if e.response is not None and e.response.status_code == 404:
             return jsonify({"error": f"MAL user '{username}' not found"}), 404
+        if e.response is not None and e.response.status_code in (502, 503, 504):
+            return jsonify({"error": "MyAnimeList service is temporarily unavailable through Jikan. Please try again in a few minutes."}), 503
         return jsonify({"error": str(e)}), 500
     except requests.exceptions.Timeout:
         return jsonify({"error": "Jikan API timed out. Try again later."}), 504
