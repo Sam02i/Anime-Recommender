@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 
-const API = "http://localhost:5000";
+const API = "https://anime-recommender-yqne.onrender.com";
 
 const DEMO_RECS = [
   { Name: "Steins;Gate", Score: 9.17, Episodes: 24, Genres: "Sci-Fi, Thriller, Drama", Synopsis: "A self-proclaimed mad scientist discovers a way to send messages to the past, triggering catastrophic consequences that unravel reality itself.", similarity_score: 0.95, Image_URL: "https://cdn.myanimelist.net/images/anime/5/73199.jpg" },
